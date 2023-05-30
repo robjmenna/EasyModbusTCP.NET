@@ -1457,15 +1457,7 @@ namespace EasyModbus
     		return (response);			
 		}
 
-
-
-        /// <summary>
-        /// Read Input Registers from Master device (FC4).
-        /// </summary>
-        /// <param name="startingAddress">First input register to be read</param>
-        /// <param name="quantity">Number of input registers to be read</param>
-        /// <returns>Int Array which contains the input registers</returns>
-        public int[] ReadInputRegisters(int startingAddress, int quantity)
+        private byte[] ReadRawInputRegisters(int startingAddress, int quantity)
 		{
             
             if (debug) StoreLogData.Instance.Store("FC4 (Read Input Registers from Master device), StartingAddress: "+ startingAddress+", Quantity: " +quantity, System.DateTime.Now);
@@ -1486,7 +1478,6 @@ namespace EasyModbus
 				if (debug) StoreLogData.Instance.Store("ArgumentException Throwed", System.DateTime.Now);
 				throw new ArgumentException("Starting address must be 0 - 65535; quantity must be 0 - 125");
 			}
-			int[] response;
 			this.transactionIdentifier = BitConverter.GetBytes((uint)transactionIdentifierInternal);
 			this.protocolIdentifier = BitConverter.GetBytes((int) 0x0000);
 			this.length = BitConverter.GetBytes((int)0x0006);
@@ -1626,7 +1617,7 @@ namespace EasyModbus
                     else
                     {
                         countRetries++;
-                        return ReadInputRegisters(startingAddress, quantity);
+                        return ReadRawInputRegisters(startingAddress, quantity);
                     }
                 }
                 else if (!dataReceived)
@@ -1641,25 +1632,12 @@ namespace EasyModbus
                     else
                     {
                         countRetries++;
-                        return ReadInputRegisters(startingAddress, quantity);
+                        return ReadRawInputRegisters(startingAddress, quantity);
                     }
                     
                 }
             }
-			response = new int[quantity];
-			for (int i = 0; i < quantity; i++)
-			{
-				byte lowByte;
-				byte highByte;
-				highByte = data[9+i*2];
-				lowByte = data[9+i*2+1];
-				
-				data[9+i*2] = lowByte;
-				data[9+i*2+1] = highByte;
-				
-				response[i] = BitConverter.ToInt16(data,(9+i*2));
-			}
-    		return (response);
+            return data;
 		}
 	
 	
@@ -2230,57 +2208,8 @@ namespace EasyModbus
             }
         }
 
-        /// <summary>
-        /// Write multiple registers to Master device (FC16).
-        /// </summary>
-        /// <param name="startingAddress">First register to be written</param>
-        /// <param name="values">register Values to be written</param>
-        public void WriteMultipleRegisters(int startingAddress, int[] values)
-        {
-            string debugString = "";
-        	for (int i = 0; i < values.Length;i++)
-        		debugString = debugString + values[i] + " ";
-        	if (debug) StoreLogData.Instance.Store("FC16 (Write multiple Registers to Server device), StartingAddress: "+ startingAddress+", Values: " + debugString, System.DateTime.Now);
-            transactionIdentifierInternal++;
-            byte byteCount = (byte)(values.Length * 2);
-            byte[] quantityOfOutputs = BitConverter.GetBytes((int)values.Length);
-            if (serialport != null)
-                if (!serialport.IsOpen)
-            	{
-            		if (debug) StoreLogData.Instance.Store("SerialPortNotOpenedException Throwed", System.DateTime.Now);
-                    throw new EasyModbus.Exceptions.SerialPortNotOpenedException("serial port not opened");
-            	}
-            if (tcpClient == null & !udpFlag & serialport == null)
-            {
-				if (debug) StoreLogData.Instance.Store("ConnectionException Throwed", System.DateTime.Now);
-                throw new EasyModbus.Exceptions.ConnectionException("connection error");
-			}
-            this.transactionIdentifier = BitConverter.GetBytes((uint)transactionIdentifierInternal);
-            this.protocolIdentifier = BitConverter.GetBytes((int)0x0000);
-            this.length = BitConverter.GetBytes((int)(7+values.Length*2));
-            this.functionCode = 0x10;
-            this.startingAddress = BitConverter.GetBytes(startingAddress);
-
-            Byte[] data = new byte[13+2 + values.Length*2];
-            data[0] = this.transactionIdentifier[1];
-            data[1] = this.transactionIdentifier[0];
-            data[2] = this.protocolIdentifier[1];
-            data[3] = this.protocolIdentifier[0];
-            data[4] = this.length[1];
-            data[5] = this.length[0];
-            data[6] = this.unitIdentifier;
-            data[7] = this.functionCode;
-            data[8] = this.startingAddress[1];
-            data[9] = this.startingAddress[0];
-            data[10] = quantityOfOutputs[1];
-            data[11] = quantityOfOutputs[0];
-            data[12] = byteCount;
-            for (int i = 0; i < values.Length; i++)
-            {
-                byte[] singleRegisterValue = BitConverter.GetBytes((int)values[i]);
-                data[13 + i*2] = singleRegisterValue[1];
-                data[14 + i*2] = singleRegisterValue[0];
-            }
+        private void WriteMultipleRegistersRaw(int startingAddress, byte[] data)
+        {            
             crc = BitConverter.GetBytes(calculateCRC(data, (ushort)(data.Length - 8), 6));
             data[data.Length - 2] = crc[0];
             data[data.Length - 1] = crc[1];
@@ -2396,7 +2325,7 @@ namespace EasyModbus
                     else
                     {
                         countRetries++;
-                        WriteMultipleRegisters(startingAddress, values);
+                        WriteMultipleRegistersAsBytes(startingAddress, data);
                     }
                 }
              else if (!dataReceived)
@@ -2411,7 +2340,7 @@ namespace EasyModbus
                     else
                     {
                         countRetries++;
-                        WriteMultipleRegisters(startingAddress, values);
+                        WriteMultipleRegistersRaw(startingAddress, data);
                     }
                 }
             }
@@ -2872,5 +2801,137 @@ namespace EasyModbus
             }
         }
 
+        public void WriteMultipleRegistersAsBytes(int startingAddress, byte[] values)
+        {
+            string debugString = "";
+            for (int i = 0; i < values.Length; i++)
+                debugString = debugString + values[i] + " ";
+            if (debug) StoreLogData.Instance.Store("FC16 (Write multiple Registers to Server device as bytes), StartingAddress: " + startingAddress + ", Values: " + debugString, System.DateTime.Now);
+            transactionIdentifierInternal++;
+            byte byteCount = (byte)(values.Length);
+            byte[] quantityOfOutputs = BitConverter.GetBytes((int)values.Length / 2);
+            if (serialport != null)
+                if (!serialport.IsOpen)
+                {
+                    if (debug) StoreLogData.Instance.Store("SerialPortNotOpenedException Throwed", System.DateTime.Now);
+                    throw new EasyModbus.Exceptions.SerialPortNotOpenedException("serial port not opened");
+                }
+            if (tcpClient == null & !udpFlag & serialport == null)
+            {
+                if (debug) StoreLogData.Instance.Store("ConnectionException Throwed", System.DateTime.Now);
+                throw new EasyModbus.Exceptions.ConnectionException("connection error");
+            }
+            this.transactionIdentifier = BitConverter.GetBytes((uint)transactionIdentifierInternal);
+            this.protocolIdentifier = BitConverter.GetBytes((int)0x0000);
+            this.length = BitConverter.GetBytes((int)(7 + values.Length));
+            this.functionCode = 0x10;
+            this.startingAddress = BitConverter.GetBytes(startingAddress);
+
+            Byte[] data = new byte[13 + 2 + values.Length];
+            data[0] = this.transactionIdentifier[1];
+            data[1] = this.transactionIdentifier[0];
+            data[2] = this.protocolIdentifier[1];
+            data[3] = this.protocolIdentifier[0];
+            data[4] = this.length[1];
+            data[5] = this.length[0];
+            data[6] = this.unitIdentifier;
+            data[7] = this.functionCode;
+            data[8] = this.startingAddress[1];
+            data[9] = this.startingAddress[0];
+            data[10] = quantityOfOutputs[1];
+            data[11] = quantityOfOutputs[0];
+            data[12] = byteCount;
+            Array.Copy(values, 0, data, 13, values.Length);
+            WriteMultipleRegistersRaw(startingAddress, data);
+        }
+
+        /// <summary>
+        /// Write multiple registers to Master device (FC16).
+        /// </summary>
+        /// <param name="startingAddress">First register to be written</param>
+        /// <param name="values">register Values to be written</param>
+        public void WriteMultipleRegisters(int startingAddress, int[] values)
+        {
+            string debugString = "";
+            for (int i = 0; i < values.Length; i++)
+                debugString = debugString + values[i] + " ";
+            if (debug) StoreLogData.Instance.Store("FC16 (Write multiple Registers to Server device), StartingAddress: " + startingAddress + ", Values: " + debugString, System.DateTime.Now);
+            transactionIdentifierInternal++;
+            byte byteCount = (byte)(values.Length * 2);
+            byte[] quantityOfOutputs = BitConverter.GetBytes((int)values.Length);
+            if (serialport != null)
+                if (!serialport.IsOpen)
+                {
+                    if (debug) StoreLogData.Instance.Store("SerialPortNotOpenedException Throwed", System.DateTime.Now);
+                    throw new EasyModbus.Exceptions.SerialPortNotOpenedException("serial port not opened");
+                }
+            if (tcpClient == null & !udpFlag & serialport == null)
+            {
+                if (debug) StoreLogData.Instance.Store("ConnectionException Throwed", System.DateTime.Now);
+                throw new EasyModbus.Exceptions.ConnectionException("connection error");
+            }
+            this.transactionIdentifier = BitConverter.GetBytes((uint)transactionIdentifierInternal);
+            this.protocolIdentifier = BitConverter.GetBytes((int)0x0000);
+            this.length = BitConverter.GetBytes((int)(7 + values.Length * 2));
+            this.functionCode = 0x10;
+            this.startingAddress = BitConverter.GetBytes(startingAddress);
+
+            Byte[] data = new byte[13 + 2 + values.Length * 2];
+            data[0] = this.transactionIdentifier[1];
+            data[1] = this.transactionIdentifier[0];
+            data[2] = this.protocolIdentifier[1];
+            data[3] = this.protocolIdentifier[0];
+            data[4] = this.length[1];
+            data[5] = this.length[0];
+            data[6] = this.unitIdentifier;
+            data[7] = this.functionCode;
+            data[8] = this.startingAddress[1];
+            data[9] = this.startingAddress[0];
+            data[10] = quantityOfOutputs[1];
+            data[11] = quantityOfOutputs[0];
+            data[12] = byteCount;
+            for (int i = 0; i < values.Length; i++)
+            {
+                byte[] singleRegisterValue = BitConverter.GetBytes((int)values[i]);
+                data[13 + i * 2] = singleRegisterValue[1];
+                data[14 + i * 2] = singleRegisterValue[0];
+            }
+            WriteMultipleRegistersRaw(startingAddress, data);
+        }
+
+        public byte[] ReadInputRegistersAsBytes(int startingRegister, int quantity)
+        {
+            var data = ReadRawInputRegisters(startingRegister, quantity);
+            var response = new byte[quantity * 2];
+            Array.Copy(data, 9, response, 0, response.Length);
+            return (response);
+        }
+
+        /// <summary>
+        /// Read Input Registers from Master device (FC4).
+        /// </summary>
+        /// <param name="startingAddress">First input register to be read</param>
+        /// <param name="quantity">Number of input registers to be read</param>
+        /// <returns>Int Array which contains the input registers</returns>
+        public int[] ReadInputRegisters(int startingRegister, int quantity)
+        {
+            var data = ReadRawInputRegisters(startingRegister, quantity);
+            int[] response = new int[quantity];
+
+            for (int i = 0; i < quantity; i++)
+            {
+                byte lowByte;
+                byte highByte;
+                highByte = data[9 + i * 2];
+                lowByte = data[9 + i * 2 + 1];
+
+                data[9 + i * 2] = lowByte;
+                data[9 + i * 2 + 1] = highByte;
+
+                response[i] = BitConverter.ToInt16(data, (9 + i * 2));
+            }
+
+            return response;
+        }
     }
 }
